@@ -67,6 +67,7 @@ jobs:
       matrix:
         platform: [ubuntu18, ubuntu20, ubuntu22]
     outputs:
+      np-tests: ${{steps.build.outputs.np-tests}}
       lr-tests: ${{steps.build.outputs.lr-tests}}
     runs-on: ["self-hosted", "enf-x86-beefy"]
     container: ${{fromJSON(needs.d.outputs.p)[matrix.platform].image}}
@@ -86,6 +87,7 @@ jobs:
             ninja
             # the correct approach is by far "--show-only=json-v1 | jq '.tests[].name' | jq -sc"  but that doesn't work on U18's cmake 3.10 since it lacks json-v1
             echo ::set-output name=lr-tests::$(ctest -L "long_running_tests" --show-only | head -n -1 | cut -d ':' -f 2 -s | jq -cnR '[inputs | select(length>0)[1:]]')
+            echo ::set-output name=np-tests::$(ctest -L "nonparallelizable_tests" --show-only | head -n -1 | cut -d ':' -f 2 -s | jq -cnR '[inputs | select(length>0)[1:]]')
             tar -pc -C .. --exclude "*.a" --exclude "*.o" build | zstd --long -T0 -9 > ../build.tar.gz
         - name: Upload builddir
           uses: actions/upload-artifact@v3
@@ -136,7 +138,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [ubuntu20]
+        platform: [ubuntu18, ubuntu20, ubuntu22]
+        test-name: ${{fromJSON(needs.Build.outputs.np-tests)}}
     runs-on: ubuntu-latest
     container:
       image: ${{fromJSON(needs.d.outputs.p)[matrix.platform].image}}
@@ -153,16 +156,16 @@ jobs:
         run: |
           zstdcat build.tar.gz | tar x
           cd build
-          ctest --output-on-failure -L "nonparallelizable_tests"
+          ctest --output-on-failure -R ${{matrix.test-name}}
       - name: Bundle logs from failed tests
         if: failure()
-        run: tar -czf ${{matrix.platform}}-serial-logs.tar.gz build/var build/etc
+        run: tar --ignore-failed-read -czf ${{matrix.platform}}-${{matrix.test-name}}-logs.tar.gz build/var build/etc
       - name: Upload logs from failed tests  
         uses: actions/upload-artifact@v3
         if: failure()
         with:
-          name: ${{matrix.platform}}-serial-logs
-          path: ${{matrix.platform}}-serial-logs.tar.gz
+          name: ${{matrix.platform}}-${{matrix.test-name}}-logs
+          path: ${{matrix.platform}}-${{matrix.test-name}}-logs.tar.gz
   lr-tests:
     name: LR Tests
     needs: [d, Build]
